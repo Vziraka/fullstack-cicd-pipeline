@@ -29,7 +29,9 @@ WORKDIR /app
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY app/ .
-# takes the built image and copies only the node_modules 
+# Copies ONLY the node_modules folder from the builder stage 
+# into the production image. This is the whole point of multi-stage — 
+# we leave the build tools behind and only take what we need to run the app.
 RUN chown -R appuser:appgroup /app
 # Gives the appuser ownership of all files in /app. 
 # Without this the files would be owned by root and appuser couldn't read them.

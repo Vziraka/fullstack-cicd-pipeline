@@ -1,5 +1,13 @@
 node_modules/
 app/node_modules/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+terraform.tfvars
 .env
 .env.*
 *.env
