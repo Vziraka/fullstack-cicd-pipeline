@@ -1,0 +1,12 @@
+node_modules/
+app/node_modules/
+.env
+.env.*
+*.env
+*.pem
+*.key
+*_accessKeys*
+*.csv
+coverage/
+*.log
+npm-debug.log*
