@@ -20,9 +20,10 @@ RUN npm ci --only=production
 
 
 
-# prodcutions stage 
+# prodcutions stage
 FROM node:24-alpine AS production
-# tells what node.js version were using 
+# tells what node.js version were using
+RUN apk upgrade --no-cache zlib && npm uninstall -g npm
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 # this creates a non-root by adding user group called system and adds a user to it  
 WORKDIR /app
