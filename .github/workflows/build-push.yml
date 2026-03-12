@@ -1,76 +1,198 @@
-name: Build, Test, Scan, and Push to ECR
+name: CI/CD Pipeline — COMET Orders API
 
 on:
   push:
-    branches:
-      - main  
-# it run wehn stuff gets pushed to the main file 
+    branches: [main, dev]
+
 permissions:
-  id-token: write # 
-  contents: read # this is needed to read the code and get the token for authentication to AWS
+  id-token: write
+  contents: read
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest # what environment we want to run this on
 
-    steps: 
-      - name: Checkout code 
-        uses: actions/checkout@v4  #  takes this code adn checks into enviornment
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4 # itll set up node for us 
+        uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      - name: Install dependencies # install dependencies for our node app
-        working-directory: ./app # gonnna run this command in the app directory where our pakaage.json is 
-        run: npm ci # this will alos install our lock file
-
-      - name: Run Jest tests 
+      - name: Install dependencies
         working-directory: ./app
-        run: npm test # run our tests
+        run: npm ci
+
+      - name: Run Jest tests
+        working-directory: ./app
+        run: npm test
+
+  build-push:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image-uri: ${{ steps.set-image.outputs.image-uri }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: |
-          docker build -t comet-orders-api:${{ github.sha }} . # the will built it and tag it 
-                                                               # to see who comiited it and what commit was 
-          
+        run: docker build -t comet-orders-api:${{ github.sha }} .
+
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: comet-orders-api:${{ github.sha }}
           format: table
-          exit-code: '1' 
+          exit-code: '1'
           severity: CRITICAL,HIGH
-         # runs a vulnerability scan on our docker image 
-         #and if it finds any vulnerabilities with a severity of high or critical it will fail the build
 
-
-      - name: Configure AWS credentials via OIDC 
-        uses: aws-actions/configure-aws-credentials@v4  # the actions vefify the identity of github actions 
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.ECR_ROLE_ARN }} # github actions the assumes the role to push to ECR
+          role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
           aws-region: us-east-1
 
-          # overall the step configures temporary AWS credentails for github actions 
-      - name: Authenticate Docker to ECR
-        run: |
-          aws ecr get-login-password --region us-east-1 | \
-          docker login --username AWS --password-stdin \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
-          # this command gets the login password for ECR and then uses it to authenticate Docker to our ECR registry
-          
-          # github action will use the temporary credentials to authenticate to the ECR 
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Tag image for ECR
+      - name: Tag and push image to ECR
+        id: set-image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker tag comet-orders-api:${{ github.sha }} \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
-         # gives tags to the image so that we can push it to the ECR registry 
+          IMAGE_URI=$REGISTRY/comet-orders-api:${{ github.sha }}
+          if aws ecr describe-images --repository-name comet-orders-api \
+               --image-ids imageTag=${{ github.sha }} --region us-east-1 \
+               > /dev/null 2>&1; then
+            echo "Image already exists in ECR, skipping push"
+          else
+            docker tag comet-orders-api:${{ github.sha }} $IMAGE_URI
+            docker push $IMAGE_URI
+          fi
+          echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-      - name: Push image to ECR
+  deploy-staging:
+    needs: build-push
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Download staging task definition
         run: |
-          docker push \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
-         # finally pushes the image to the ECR    
-   
+          aws ecs describe-task-definition \
+            --task-definition fullstack-cicd-pipeline-dev \
+            --query taskDefinition > task-definition.json
+
+      - name: Update staging task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: comet-orders-api
+          image: ${{ needs.build-push.outputs.image-uri }}
+
+      - name: Deploy to staging ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: fullstack-cicd-pipeline-dev
+          cluster: fullstack-cicd-pipeline-dev
+          wait-for-service-stability: true
+
+  deploy-production:
+    needs: build-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Download production task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition fullstack-cicd-pipeline-prod \
+            --query taskDefinition > task-definition.json
+
+      - name: Update production task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: comet-orders-api
+          image: ${{ needs.build-push.outputs.image-uri }}
+
+      - name: Deploy to production ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: fullstack-cicd-pipeline-prod
+          cluster: fullstack-cicd-pipeline-dev
+          wait-for-service-stability: true
+
+      - name: Generate AI deployment summary
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          DIFF=$(git diff HEAD~1 HEAD -- app/ --stat)
+          CHANGED_FILES=$(git diff HEAD~1 HEAD --name-only -- app/)
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+
+          SUMMARY=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "{
+              \"model\": \"claude-haiku-4-5-20251001\",
+              \"max_tokens\": 512,
+              \"messages\": [{
+                \"role\": \"user\",
+                \"content\": \"You are a deployment assistant. Summarize this production deployment in plain English for a non-technical stakeholder. Include: what changed, any risks, and rollback instructions.\n\nCommit: $COMMIT_MSG\n\nFiles changed:\n$CHANGED_FILES\n\nDiff summary:\n$DIFF\"
+              }]
+            }" | jq -r '.content[0].text')
+
+          cat > deployment-summary.md << EOF
+          # Deployment Summary
+          **Date:** $(date -u +"%Y-%m-%d %H:%M UTC")
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref_name }}
+          **Deployed by:** ${{ github.actor }}
+
+          ## What Changed
+          $SUMMARY
+
+          ## Rollback Instructions
+          To rollback this deployment:
+          \`\`\`bash
+          # Find the previous task definition revision
+          aws ecs describe-services --cluster fullstack-cicd-pipeline-dev --services fullstack-cicd-pipeline-prod
+
+          # Force new deployment with previous task definition
+          aws ecs update-service --cluster fullstack-cicd-pipeline-dev --service fullstack-cicd-pipeline-prod --task-definition fullstack-cicd-pipeline-prod:<PREVIOUS_REVISION>
+          \`\`\`
+          EOF
+
+      - name: Upload deployment summary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-summary-${{ github.sha }}
+          path: deployment-summary.md
+          retention-days: 30
