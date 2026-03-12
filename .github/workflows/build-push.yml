@@ -55,16 +55,16 @@ jobs:
           role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Authenticate Docker to ECR
-        run: |
-          aws ecr get-login-password --region us-east-1 | \
-          docker login --username AWS --password-stdin \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Tag and push image to ECR
         id: set-image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
+          IMAGE_URI=$REGISTRY/comet-orders-api:${{ github.sha }}
           docker tag comet-orders-api:${{ github.sha }} $IMAGE_URI
           docker push $IMAGE_URI
           echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
