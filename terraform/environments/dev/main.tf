@@ -34,8 +34,7 @@ data "aws_iam_openid_connect_provider" "github" {
 
 resource "aws_ecr_repository" "app" { # creates the ECR repo for my app 
   name                 = var.ecr_repo_name
-  image_tag_mutability = "IMMUTABLE" # this means images cant be overwritten using the same tags
-                                     # this is good knowing who the authro is 
+  image_tag_mutability = "IMMUTABLE" # this means images tags cant be overwritten so you always know which version is which
                                      # and making sure you push the right image 
   image_scanning_configuration {
     scan_on_push = true # scans the image for vulnerabilties 
@@ -96,12 +95,12 @@ resource "aws_iam_role" "ecr_push_pull" { #Role for push and pull policies
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          } # verifies the token with AWS
+          } # verifies the token is meant for AWS
 
 
           StringLike = {
             "token.actions.githubusercontent.com:sub" = "repo:Vziraka/fullstack-cicd-pipeline:*"
-          } # restrics only to my github repo 
+          } # verifies the token is from the correct repo and allows all branches and PRs to use this role
         }
       }
     ]
