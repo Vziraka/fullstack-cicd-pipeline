@@ -115,6 +115,37 @@ resource "aws_iam_role" "ecr_push_pull" { #Role for push and pull policies
   }
 }
 
+resource "aws_iam_role_policy" "ecs_deploy" {
+  name = "ecs-deploy-policy"
+  role = aws_iam_role.ecr_push_pull.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeServices",
+          "ecs:DescribeTaskDefinition",
+          "ecs:RegisterTaskDefinition",
+          "ecs:UpdateService"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = "*"
+        Condition = {
+          StringLike = {
+            "iam:PassedToService" = "ecs-tasks.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "ecr_push_pull" { # policy for push and pull for the role
   name = "ecr-push-pull-policy"
   role = aws_iam_role.ecr_push_pull.id
