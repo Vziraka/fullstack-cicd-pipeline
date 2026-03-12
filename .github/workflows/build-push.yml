@@ -1,0 +1,65 @@
+name: Build, Test, Scan, and Push to ECR
+
+on:
+  push:
+    branches:
+      - main  
+# it run wehn stuff gets pushed to the main file 
+permissions:
+  id-token: write # 
+  contents: read # this is needed to read the code and get the token for authentication to AWS
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest # whats the VM runs on 
+
+    steps: 
+      - name: Checkout code
+        uses: actions/checkout@v4 
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Run Jest tests
+        working-directory: ./app
+        run: npm test
+
+      - name: Build Docker image
+        run: |
+          docker build -t comet-orders-api:${{ github.sha }} .
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: comet-orders-api:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Authenticate Docker to ECR
+        run: |
+          aws ecr get-login-password --region us-east-1 | \
+          docker login --username AWS --password-stdin \
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+      - name: Tag image for ECR
+        run: |
+          docker tag comet-orders-api:${{ github.sha }} \
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
+
+      - name: Push image to ECR
+        run: |
+          docker push \
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
