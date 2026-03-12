@@ -65,8 +65,14 @@ jobs:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
           IMAGE_URI=$REGISTRY/comet-orders-api:${{ github.sha }}
-          docker tag comet-orders-api:${{ github.sha }} $IMAGE_URI
-          docker push $IMAGE_URI
+          if aws ecr describe-images --repository-name comet-orders-api \
+               --image-ids imageTag=${{ github.sha }} --region us-east-1 \
+               > /dev/null 2>&1; then
+            echo "Image already exists in ECR, skipping push"
+          else
+            docker tag comet-orders-api:${{ github.sha }} $IMAGE_URI
+            docker push $IMAGE_URI
+          fi
           echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
   deploy-staging:
