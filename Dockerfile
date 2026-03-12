@@ -7,7 +7,7 @@
 
 
 # builder stage 
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 # use tells to use node.js version 
 WORKDIR /app
 # tells where the app is located 
@@ -21,7 +21,7 @@ RUN npm ci --only=production
 
 
 # prodcutions stage 
-FROM node:20-alpine AS production
+FROM node:24-alpine AS production
 # tells what node.js version were using 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 # this creates a non-root by adding user group called system and adds a user to it  

@@ -11,55 +11,66 @@ permissions:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest # whats the VM runs on 
+    runs-on: ubuntu-latest # what environment we want to run this on
 
     steps: 
-      - name: Checkout code
-        uses: actions/checkout@v4 
+      - name: Checkout code 
+        uses: actions/checkout@v4  #  takes this code adn checks into enviornment
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4 # itll set up node for us 
         with:
-          node-version: '20'
+          node-version: '24'
 
-      - name: Install dependencies
-        working-directory: ./app
-        run: npm ci
+      - name: Install dependencies # install dependencies for our node app
+        working-directory: ./app # gonnna run this command in the app directory where our pakaage.json is 
+        run: npm ci # this will alos install our lock file
 
-      - name: Run Jest tests
+      - name: Run Jest tests 
         working-directory: ./app
-        run: npm test
+        run: npm test # run our tests
 
       - name: Build Docker image
         run: |
-          docker build -t comet-orders-api:${{ github.sha }} .
-
+          docker build -t comet-orders-api:${{ github.sha }} . # the will built it and tag it 
+                                                               # to see who comiited it and what commit was 
+          
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: comet-orders-api:${{ github.sha }}
           format: table
-          exit-code: '1'
+          exit-code: '1' 
           severity: CRITICAL,HIGH
+         # runs a vulnerability scan on our docker image 
+         #and if it finds any vulnerabilities with a severity of high or critical it will fail the build
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+
+      - name: Configure AWS credentials via OIDC 
+        uses: aws-actions/configure-aws-credentials@v4  # the actions vefify the identity of github actions 
         with:
-          role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
+          role-to-assume: ${{ secrets.ECR_ROLE_ARN }} # github actions the assumes the role to push to ECR
           aws-region: us-east-1
 
+          # overall the step configures temporary AWS credentails for github actions 
       - name: Authenticate Docker to ECR
         run: |
           aws ecr get-login-password --region us-east-1 | \
           docker login --username AWS --password-stdin \
           ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+          # this command gets the login password for ECR and then uses it to authenticate Docker to our ECR registry
+          
+          # github action will use the temporary credentials to authenticate to the ECR 
 
       - name: Tag image for ECR
         run: |
           docker tag comet-orders-api:${{ github.sha }} \
           ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
+         # gives tags to the image so that we can push it to the ECR registry 
 
       - name: Push image to ECR
         run: |
           docker push \
           ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/comet-orders-api:${{ github.sha }}
+         # finally pushes the image to the ECR    
+   
